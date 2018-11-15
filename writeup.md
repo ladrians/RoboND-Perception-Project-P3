@@ -10,6 +10,9 @@ My solution for the Robotics NanoDegree [Project #3](https://github.com/udacity/
 [image3]: ./misc_images/sample_1.png
 [image4]: ./misc_images/sample_2.png
 [image5]: ./misc_images/sample_3.png
+[image6]: ./misc_images/segmentation_1.png
+[image7]: ./misc_images/table_filter_1.png
+[image8]: ./misc_images/object_filter_1.png
 
 ---
 ### Description
@@ -123,6 +126,13 @@ Then, filter further the region of interes on the z-axis and x-axis to isolate t
 pass_filter = passthrough_filter(voxel_filtered, 'z', 0.6, 1.1) # Table filter
 pass_filter = passthrough_filter(pass_filter, 'x', 0.3, 4) # Object filter
 ```
+Table filter sample:
+
+![Table filter Sample][image7]
+
+Object filter sample:
+
+![Object filter Sample][image8]
 
 #### Segmentation
 
@@ -167,6 +177,10 @@ For debugging purposes the following line is added to output:
 ```python
 rospy.loginfo('Detected {} objects: {}'.format(len(detected_objects_labels), detected_objects_labels))
 ```
+
+A segmentation and object recognition sample is as follows:
+
+![Segmentation and object recognition][image6]
 
 #### Find the Centroid
 
