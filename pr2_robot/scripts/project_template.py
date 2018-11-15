@@ -113,7 +113,7 @@ def histogram_feature_vector(sample_cloud):
     normals = get_normals(sample_cloud)
     nhists = compute_normal_histograms(normals)
 
-     # Compute the associated feature vector
+    # Compute the associated feature vector
     feature = np.concatenate((hists, nhists))
     return feature
 
