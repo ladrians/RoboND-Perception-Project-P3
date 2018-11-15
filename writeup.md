@@ -172,6 +172,22 @@ prediction = clf.predict(scaler.transform(feature.reshape(1,-1)))
 label = encoder.inverse_transform(prediction)[0]
 ```
 
+The `histogram_feature_vector` function is implemented as follows in the same file using the exercises suggestion:
+
+```python
+def histogram_feature_vector(sample_cloud):
+    # Extract histogram features
+    hists = compute_color_histograms(sample_cloud, using_hsv=True)
+    normals = get_normals(sample_cloud)
+    nhists = compute_normal_histograms(normals)
+
+    # Compute the associated feature vector
+    feature = np.concatenate((hists, nhists))
+    return feature
+```
+
+The implementation for the `compute_color_histograms`, `get_normals` and `compute_normal_histograms` functions can be checked on the [features.py](pr2_robot/scripts/features.py) file mainly using the exercises suggestion.
+
 For debugging purposes the following line is added to output:
 
 ```python
