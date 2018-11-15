@@ -46,49 +46,41 @@ def send_to_yaml(yaml_filename, dict_list):
     with open(yaml_filename, 'w') as outfile:
         yaml.dump(data_dict, outfile, default_flow_style=False)
 
-# Callback function for your Point Cloud Subscriber
-def pcl_callback(ros_pcl_msg):
 
-# Exercise-2 TODOs:
+## Code reorganized
 
-    # Convert ROS msg to PCL data
-    pcl_msg = ros_to_pcl(ros_pcl_msg)
-    
-    # Statistical Outlier Filtering
+def statistical_filter(pcl_msg):
     outlier_filter = pcl_msg.make_statistical_outlier_filter()
     outlier_filter.set_mean_k(50)
     x = 1.0
     outlier_filter.set_std_dev_mul_thresh(x)
     sts_filter = outlier_filter.filter()
+    return sts_filter
 
-    # Voxel Grid Downsampling
-    vox = sts_filter.make_voxel_grid_filter()
+def voxel_downsample(pcl_msg):
+    vox = pcl_msg.make_voxel_grid_filter()
     LEAF_SIZE = 0.01
     vox.set_leaf_size(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE)
     cloud_filtered = vox.filter()
+    return cloud_filtered
 
-    # PassThrough Filter
-    passthrough = cloud_filtered.make_passthrough_filter()
-    filter_axis = 'z'
+def passthrough_filter(pcl_msg, filter_axis, axis_min, axis_max):
+    passthrough = pcl_msg.make_passthrough_filter()
     passthrough.set_filter_field_name(filter_axis)
-    axis_min = 0.6
-    axis_max = 1.1
     passthrough.set_filter_limits(axis_min, axis_max)
+    cloud_filtered = passthrough.filter()
+    return cloud_filtered
 
-    # RANSAC Plane Segmentation
-    seg = cloud_filtered.make_segmenter()
+def ransac_segmentation(pcl_msg):
+    seg = pcl_msg.make_segmenter()
     seg.set_model_type(pcl.SACMODEL_PLANE)
     seg.set_method_type(pcl.SAC_RANSAC)
     max_distance = 0.01
     seg.set_distance_threshold(max_distance)
+    return seg
 
-    # Extract inliers and outliers
-    inliers, coefficients = seg.segment()
-    extracted_inliers = cloud_filtered.extract(inliers, negative=False) # Table
-    extracted_outliers = cloud_filtered.extract(inliers, negative=True) # Objects
-
-    # Euclidean Clustering
-    white_cloud = XYZRGB_to_XYZ(extracted_outliers)
+def euclidean_cluster(outlier):
+    white_cloud = XYZRGB_to_XYZ(outlier)
     tree = white_cloud.make_kdtree()
     ec = white_cloud.make_EuclideanClusterExtraction()
     ec.set_ClusterTolerance(0.02) # 2 cm
@@ -96,8 +88,9 @@ def pcl_callback(ros_pcl_msg):
     ec.set_MaxClusterSize(250000)
     ec.set_SearchMethod(tree)
     cluster_indices = ec.Extract()
+    return white_cloud, cluster_indices
 
-    # Create Cluster-Mask Point Cloud to visualize each cluster separately
+def segment_cluster_by_color(white_cloud, cluster_indices):
     cluster_color = get_color_list(len(cluster_indices))
 
     color_cluster_point_list = []
@@ -112,6 +105,77 @@ def pcl_callback(ros_pcl_msg):
     cluster_cloud = pcl.PointCloud_PointXYZRGB()
     cluster_cloud.from_list(color_cluster_point_list)
 
+    return cluster_cloud
+
+def histogram_feature_vector(sample_cloud):
+    # Extract histogram features
+    hists = compute_color_histograms(sample_cloud, using_hsv=True)
+    normals = get_normals(sample_cloud)
+    nhists = compute_normal_histograms(normals)
+
+     # Compute the associated feature vector
+    feature = np.concatenate((hists, nhists))
+    return feature
+
+def get_scene_number():
+    scene_number = rospy.get_param('/scene_number')
+    num = int(scene_number)
+    return num
+
+def get_object_group(obj_name, object_list_param):
+    object_group = ''
+    for item in object_list_param:
+        if item['name'] == obj_name:
+            object_group = item['group']
+            break
+    return object_group
+
+def get_arm_name(object_group):
+    name = 'left' if object_group == 'red' else 'right'
+    return name
+
+def get_place_pose(object_group, dropbox_list_param):
+    pose = Pose()
+    for item in dropbox_list_param:
+        if item['group'] == object_group:
+            position = item['position']
+            pose.position.x = position[0]
+	    pose.position.y = position[1]
+	    pose.position.z = position[2]
+    return pose
+
+# Callback function for your Point Cloud Subscriber
+def pcl_callback(ros_pcl_msg):
+
+# Exercise-2:
+
+    # Convert ROS msg to PCL data
+    pcl_msg = ros_to_pcl(ros_pcl_msg)
+    
+    # Statistical Outlier Filtering
+    sts_filter = statistical_filter(pcl_msg)
+
+    # Voxel Grid Downsampling
+    voxel_filtered = voxel_downsample(sts_filter)
+
+    # PassThrough Filters
+    pass_filter = passthrough_filter(voxel_filtered, 'z', 0.6, 1.1) # Table filter
+    pass_filter = passthrough_filter(pass_filter, 'x', 0.3, 4) # Object filter
+
+    # RANSAC Plane Segmentation
+    seg = ransac_segmentation(pass_filter)
+
+    # Extract inliers and outliers
+    inliers, coefficients = seg.segment()
+    extracted_inliers = pass_filter.extract(inliers, negative=False) # Table
+    extracted_outliers = pass_filter.extract(inliers, negative=True) # Objects
+
+    # Euclidean Clustering
+    white_cloud, cluster_indices = euclidean_cluster(extracted_outliers)
+
+    # Create Cluster-Mask Point Cloud to visualize each cluster separately
+    cluster_cloud = segment_cluster_by_color(white_cloud, cluster_indices)
+
     # Convert PCL data to ROS messages
     ros_cluster_cloud = pcl_to_ros(cluster_cloud)
     ros_cloud_table = pcl_to_ros(extracted_inliers)
@@ -120,25 +184,21 @@ def pcl_callback(ros_pcl_msg):
     pcl_objects_pub.publish(ros_cluster_cloud)
     pcl_table_pub.publish(ros_cloud_table)
 
-# Exercise-3 TODOs:
+# Exercise-3:
 
     # Classify the clusters! (loop through each detected cluster one at a time)
     detected_objects_labels = []
     detected_objects = []
 
     for index, pts_list in enumerate(cluster_indices):
+
         # Grab the points for the cluster from the extracted outliers (cloud_objects)
         pcl_cluster = extracted_outliers.extract(pts_list)
         # convert the cluster from pcl to ROS using helper function
-        sample_cloud = pcl_to_ros(pcl_cluster)
+        object_cloud = pcl_to_ros(pcl_cluster)
 
         # Extract histogram features
-        hists = compute_color_histograms(sample_cloud, using_hsv=True)
-        normals = get_normals(sample_cloud)
-        nhists = compute_normal_histograms(normals)
-
-        # Compute the associated feature vector
-        feature = np.concatenate((hists, nhists))
+        feature = histogram_feature_vector(object_cloud)
 
         # Make the prediction, retrieve the label for the result and add it to detected_objects_labels list
         prediction = clf.predict(scaler.transform(feature.reshape(1,-1)))
@@ -153,7 +213,7 @@ def pcl_callback(ros_pcl_msg):
         # Add the detected object to the list of detected objects.
         do = DetectedObject()
         do.label = label
-        do.cloud = sample_cloud
+        do.cloud = object_cloud
         detected_objects.append(do)
 
     rospy.loginfo('Detected {} objects: {}'.format(len(detected_objects_labels), detected_objects_labels))
@@ -163,52 +223,62 @@ def pcl_callback(ros_pcl_msg):
 
     try:
         pr2_mover(detected_objects)
-    except rospy.ROSInterruptException:
-        pass
+    except rospy.ROSInterruptException as e:
+        #pass
+        rospy.loginfo('Exception {}:{}'.format(e.name, e.description))
 
 # function to load parameters and request PickPlace service
 def pr2_mover(object_list):
 
-    # TODO: Initialize variables
-    yaml_filename = 'output_1.yaml'
+    # Initialize variables
+    object_name = String()
+    arm_name = String()
+    pick_pose = Pose()
+    place_pose = Pose()
+
     test_scene_num = Int32()
-    centroids = []
+    test_scene_num.data = get_scene_number()
+    yaml_filename = 'output_%s.yaml'%test_scene_num.data
     dict_list = []
 
-    # TODO: Get/Read parameters
+    # Get/Read parameters
+    object_list_param = rospy.get_param('/object_list')
+    dropbox_list_param = rospy.get_param('/dropbox')
 
-    # TODO: Parse parameters into individual variables
 
-    # TODO: Rotate PR2 in place to capture side tables for the collision map
+    # Parse parameters into individual variables
+    for obj in object_list:
 
-    # TODO: Loop through the pick list
-    for index, obj in enumerate(object_list):
+        obj_name = str(obj.label)
+
+        # Loop through the pick list
+        object_group = get_object_group(obj_name, object_list_param)
+
+        # TODO: Rotate PR2 in place to capture side tables for the collision map
 
         # Get the PointCloud for a given object and obtain it's centroid
         points_arr = ros_to_pcl(obj.cloud).to_array()
-        centroids.append(np.mean(points_arr, axis=0)[:3])
-        center_x = np.asscalar(centroids[index][0])
-        center_y = np.asscalar(centroids[index][1])
-        center_z = np.asscalar(centroids[index][2])
+        centroid = np.mean(points_arr, axis=0)[:3]
+        center_x = np.asscalar(centroid[0])
+        center_y = np.asscalar(centroid[1])
+        center_z = np.asscalar(centroid[2])
 
-        object_name = String()
-        object_name.data = obj['name']
-        arm_name = String()
-        arm_name.data = '' # TODO
-
-        # TODO: Create 'place_pose' for the object
-        place_pose = Pose()
-
-        # TODO: Assign the arm to be used for pick_place
-        pick_pose = Pose()
         pick_pose.position.x = center_x
         pick_pose.position.y = center_y
         pick_pose.position.z = center_z
 
-        # TODO: Create a list of dictionaries (made with make_yaml_dict()) for later output to yaml format
+        # Create 'place_pose' for the object
+        place_pose = get_place_pose(object_group, dropbox_list_param)
+
+        # Assign the arm to be used for pick_place
+        arm_name.data = get_arm_name(object_group)
+
+        # Create a list of dictionaries (made with make_yaml_dict()) for later output to yaml format
+        object_name.data = obj_name
         yaml_dict = make_yaml_dict(test_scene_num, arm_name, object_name, pick_pose, place_pose)
         dict_list.append(yaml_dict)
 
+        '''
         # Wait for 'pick_place_routine' service to come up
         rospy.wait_for_service('pick_place_routine')
 
@@ -222,8 +292,9 @@ def pr2_mover(object_list):
 
         except rospy.ServiceException, e:
             print "Service call failed: %s"%e
+        '''
 
-    # TODO: Output your request parameters into output yaml file
+    # Output your request parameters into output yaml file
     send_to_yaml(yaml_filename, dict_list)
 
 if __name__ == '__main__':
